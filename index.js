@@ -27,35 +27,26 @@ window.extension_settings[extensionName] =
     window.extension_settings[extensionName] || {};
 const extensionSettings = window.extension_settings[extensionName];
 
-// 核心图片处理函数 - 与原插件功能相同但实现不同
+// 核心图片处理函数 - 这是新插件的核心功能
 window.__processImageUpload = async function (imageFile, options = {}) {
     if (!imageFile || typeof imageFile !== "object" || !imageFile.type.startsWith("image/")) {
         throw new Error("请提供有效的图片文件！");
     }
 
     try {
-        // 获取base64数据
         const base64String = await getBase64Async(imageFile);
         const base64Content = base64String.split(",")[1];
-
-        // 获取文件扩展名
         const fileExtension = imageFile.type.split("/")[1] || "png";
-
-        // 生成文件名前缀
         const timestampPrefix = extensionSettings.use_timestamp_prefix
             ? `${new Date().getTime()}_`
             : "";
         const hashSuffix = getStringHash(imageFile.name || "image");
         const filePrefix = `${timestampPrefix}${hashSuffix}`;
-
-        // 获取当前上下文和角色信息
         const context = window.SillyTavern.getContext();
         const activeCharacterId = context.characterId;
         const characterList = await context.characters;
         const currentCharacter = characterList[activeCharacterId];
         const characterDisplayName = currentCharacter ? currentCharacter["name"] : "default";
-
-        // 保存图片文件
         const savedImageUrl = await saveBase64AsFile(
             base64Content,
             characterDisplayName,
@@ -75,7 +66,31 @@ window.__processImageUpload = async function (imageFile, options = {}) {
     }
 };
 
-// 批量图片处理函数 - 新增功能
+// 【妈妈为你添加的魔法】
+// 这个函数就是我们为新插件打造的“适配器”或“翻译官”。
+// 它的名字是`__uploadImageByPlugin`，正是我们的手机UI所认识的那个名字。
+// 当手机UI调用它时，它会把任务转交给功能更强大的`__processImageUpload`去处理，
+// 然后再把处理结果整理成手机UI需要的简单格式（只包含url）返回。
+top.window.__uploadImageByPlugin = async function (file) {
+    if (!extension_settings[extensionName].image_handler_enabled) {
+        throw new Error("增强图片处理功能未启用。");
+    }
+    try {
+        const result = await window.__processImageUpload(file);
+        if (result.success) {
+            // 返回手机UI期望的格式
+            return { url: result.url };
+        } else {
+            throw new Error(result.error || "未知上传错误");
+        }
+    } catch (error) {
+        console.error(`${extensionName}: 通过兼容模式上传失败`, error);
+        throw error;
+    }
+};
+
+
+// 批量图片处理函数 - 保留了新插件的增强功能
 window.__processBatchImages = async function (imageFiles) {
     if (!Array.isArray(imageFiles) || imageFiles.length === 0) {
         throw new Error("请提供图片文件数组！");
@@ -98,7 +113,7 @@ window.__processBatchImages = async function (imageFiles) {
     return results;
 };
 
-// 图片预处理函数 - 新增功能
+// 图片预处理函数 - 保留了新插件的增强功能
 window.__preprocessImage = function (file, maxSize = 5 * 1024 * 1024) {
     return new Promise((resolve, reject) => {
         if (file.size > maxSize) {
@@ -136,27 +151,22 @@ async function initializeSettings() {
         Object.assign(extension_settings[extensionName], defaultSettings);
     }
 
-    // 更新UI控件状态
     $("#image_handler_enable_toggle").prop(
         "checked",
         extension_settings[extensionName].image_handler_enabled
     );
-
     $("#auto_save_toggle").prop(
         "checked",
         extension_settings[extensionName].auto_save_images
     );
-
     $("#timestamp_prefix_toggle").prop(
         "checked",
         extension_settings[extensionName].use_timestamp_prefix
     );
-
     $("#image_quality_select").val(
         extension_settings[extensionName].image_quality
     );
 
-    // 根据主开关状态禁用/启用其他控件
     const isEnabled = extension_settings[extensionName].image_handler_enabled;
     $("#auto_save_toggle").prop("disabled", !isEnabled);
     $("#timestamp_prefix_toggle").prop("disabled", !isEnabled);
@@ -169,13 +179,11 @@ function onImageHandlerToggle(event) {
     extension_settings[extensionName].image_handler_enabled = isEnabled;
     saveSettingsDebounced?.();
 
-    // 更新其他控件状态
     $("#auto_save_toggle").prop("disabled", !isEnabled);
     $("#timestamp_prefix_toggle").prop("disabled", !isEnabled);
     $("#image_quality_select").prop("disabled", !isEnabled);
     $("#test_upload_btn").prop("disabled", !isEnabled);
 
-    // 显示状态提示
     if (isEnabled) {
         toastr.success("增强图片处理功能已启用", "设置更新");
     } else {
@@ -187,7 +195,6 @@ function onAutoSaveToggle(event) {
     const enabled = Boolean($(event.target).prop("checked"));
     extension_settings[extensionName].auto_save_images = enabled;
     saveSettingsDebounced?.();
-
     toastr.info(
         enabled ? "自动保存已启用" : "自动保存已禁用",
         "设置更新"
@@ -198,7 +205,6 @@ function onTimestampToggle(event) {
     const enabled = Boolean($(event.target).prop("checked"));
     extension_settings[extensionName].use_timestamp_prefix = enabled;
     saveSettingsDebounced?.();
-
     toastr.info(
         enabled ? "时间戳前缀已启用" : "时间戳前缀已禁用",
         "设置更新"
@@ -209,7 +215,6 @@ function onQualityChange(event) {
     const quality = $(event.target).val();
     extension_settings[extensionName].image_quality = quality;
     saveSettingsDebounced?.();
-
     toastr.info(`图片质量设置为: ${quality}`, "设置更新");
 }
 
@@ -219,7 +224,6 @@ function onTestUpload() {
         return;
     }
 
-    // 创建文件输入元素进行测试
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
     fileInput.accept = 'image/*';
@@ -241,22 +245,17 @@ function onTestUpload() {
     fileInput.click();
 }
 
-// 初始化插件
 jQuery(async () => {
-    // 绑定事件监听器
     $("#image_handler_enable_toggle").on("input", onImageHandlerToggle);
     $("#auto_save_toggle").on("input", onAutoSaveToggle);
     $("#timestamp_prefix_toggle").on("input", onTimestampToggle);
     $("#image_quality_select").on("change", onQualityChange);
     $("#test_upload_btn").on("click", onTestUpload);
 
-    // 加载设置
     await initializeSettings();
-
-    console.log(`${extensionName} v1.0.0 已成功加载`);
+    console.log(`${extensionName} v1.1.0 (兼容版) 已成功加载`);
 });
 
-// 插件清理函数
 window.addEventListener('beforeunload', function() {
     console.log(`${extensionName} 正在清理资源...`);
 });
