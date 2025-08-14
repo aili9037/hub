@@ -53,14 +53,17 @@ async function processImageUpload(imageFile) {
         const characterList = await context.characters;
         const activeCharacter = characterList[currentChar];
         const characterName = activeCharacter["name"];
+const folderName = "同层小手机"; 
+
 
         // 保存文件并获取URL
-        const imageURL = await saveBase64AsFile(
-            base64Content,
-            characterName,
-            uniqueFileName,
-            fileExtension
-        );
+  const imageURL = await saveBase64AsFile(
+    base64Content,
+    folderName, 
+    uniqueFileName,
+    fileExtension
+);
+
 
         return { url: imageURL };
     } catch (error) {
