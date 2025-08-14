@@ -7,211 +7,145 @@ import {
 import {
     extension_settings,
     getContext,
+    loadExtensionSettings,
 } from "../../../extensions.js";
 
 import { saveSettingsDebounced } from "../../../../script.js";
 
-(function () {
-    const extensionName = "Enhanced-Image-Handler";
-    const defaultSettings = {
-        image_handler_enabled: true,
-        auto_save_images: true,
-        use_timestamp_prefix: true,
-        image_quality: "original"
-    };
+// 插件配置
+const PLUGIN_CONFIG = {
+    name: "图片工具",
+    id: "图片工具",
+    defaultSettings: {
+        plugin_enabled: true,
+        auto_save: true
+    }
+};
 
-    // 确保扩展设置对象存在
-    window.extension_settings = window.extension_settings || {};
-    window.extension_settings[extensionName] = window.extension_settings[extensionName] || {};
-    const extensionSettings = window.extension_settings[extensionName];
+// 初始化扩展设置
+window.extension_settings = window.extension_settings || {};
+window.extension_settings[PLUGIN_CONFIG.id] = window.extension_settings[PLUGIN_CONFIG.id] || {};
+const pluginSettings = window.extension_settings[PLUGIN_CONFIG.id];
 
-    // 核心图片处理函数
-    window.__processImageUpload = async function (imageFile) {
-        if (!extensionSettings.image_handler_enabled) {
-            console.log(`${extensionName} is disabled. Skipping image processing.`);
-            // 如果插件被禁用，可以考虑返回一个特定的状态或直接抛出错误
-            throw new Error("Enhanced Image Handler is disabled.");
-        }
-
-        if (!imageFile || typeof imageFile !== "object" || !imageFile.type.startsWith("image/")) {
-            throw new Error("Please provide a valid image file.");
-        }
-
-        try {
-            const base64String = await getBase64Async(imageFile);
-            const base64Content = base64String.split(",")[1];
-            const fileExtension = imageFile.type.split("/")[1] || "png";
-
-            const timestampPrefix = extensionSettings.use_timestamp_prefix ? `${new Date().getTime()}_` : "";
-            const hashSuffix = getStringHash(imageFile.name || "image");
-            const filePrefix = `${timestampPrefix}${hashSuffix}`;
-
-            const context = getContext();
-            const activeCharacterId = context.characterId;
-            // SillyTavern 1.11.3+ context.characters is a promise
-            const characterList = await context.characters;
-            const currentCharacter = characterList.find(c => c.avatar === activeCharacterId);
-            const characterDisplayName = currentCharacter ? currentCharacter.name : "default";
-
-            const savedImageUrl = await saveBase64AsFile(
-                base64Content,
-                characterDisplayName,
-                filePrefix,
-                fileExtension
-            );
-
-            return {
-                success: true,
-                url: savedImageUrl,
-                filename: `${filePrefix}.${fileExtension}`,
-                character: characterDisplayName
-            };
-        } catch (error) {
-            console.error(`${extensionName}: Image processing failed`, error);
-            throw new Error(`Image processing failed: ${error.message}`);
-        }
-    };
-
-    // 批量图片处理函数
-    window.__processBatchImages = async function (imageFiles) {
-        if (!Array.isArray(imageFiles) || imageFiles.length === 0) {
-            throw new Error("Please provide an array of image files.");
-        }
-
-        const results = [];
-        for (const file of imageFiles) {
-            try {
-                const result = await window.__processImageUpload(file);
-                results.push(result);
-            } catch (error) {
-                results.push({
-                    success: false,
-                    error: error.message,
-                    filename: file.name
-                });
-            }
-        }
-        return results;
-    };
-
-    // 图片预处理函数
-    window.__preprocessImage = function (file, maxSize = 5 * 1024 * 1024) {
-        return new Promise((resolve, reject) => {
-            if (file.size > maxSize) {
-                reject(new Error(`Image file is too large. Maximum size is ${maxSize / 1024 / 1024}MB.`));
-                return;
-            }
-
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const img = new Image();
-                img.onload = function() {
-                    resolve({
-                        file: file,
-                        width: img.width,
-                        height: img.height,
-                        size: file.size,
-                        type: file.type
-                    });
-                };
-                img.onerror = function() {
-                    reject(new Error("Could not read the image file."));
-                };
-                img.src = e.target.result;
-            };
-            reader.onerror = function() {
-                reject(new Error("File reading failed."));
-            };
-            reader.readAsDataURL(file);
-        });
-    };
-
-    async function initializeSettings() {
-        // 合并默认设置
-        Object.assign(extensionSettings, { ...defaultSettings, ...extensionSettings });
-
-        // 等待DOM加载完成
-        await new Promise(resolve => $(document).ready(resolve));
-
-        // 更新UI控件状态
-        $("#image_handler_enable_toggle").prop("checked", extensionSettings.image_handler_enabled);
-        $("#auto_save_toggle").prop("checked", extensionSettings.auto_save_images);
-        $("#timestamp_prefix_toggle").prop("checked", extensionSettings.use_timestamp_prefix);
-        $("#image_quality_select").val(extensionSettings.image_quality);
-
-        updateControlsState();
+// 核心图片上传功能
+async function processImageUpload(imageFile) {
+    // 验证文件类型
+    if (!imageFile || !imageFile.type || !imageFile.type.startsWith("image/")) {
+        throw new Error("请选择有效的图片文件！");
     }
 
-    function updateControlsState() {
-        const isEnabled = extensionSettings.image_handler_enabled;
-        $("#auto_save_toggle, #timestamp_prefix_toggle, #image_quality_select, #test_upload_btn").prop("disabled", !isEnabled);
+    try {
+        // 转换为base64
+        const base64String = await getBase64Async(imageFile);
+        const base64Content = base64String.split(",")[1];
+
+        // 获取文件扩展名
+        const fileExtension = imageFile.type.split("/")[1] || "png";
+
+        // 生成唯一文件名
+        const timestamp = Date.now();
+        const hashValue = getStringHash(imageFile.name);
+        const uniqueFileName = `${timestamp}_${hashValue}`;
+
+        // 获取当前角色信息
+        const context = window.SillyTavern.getContext();
+        const currentChar = context.characterId;
+        const characterList = await context.characters;
+        const activeCharacter = characterList[currentChar];
+        const characterName = activeCharacter["name"];
+
+        // 保存文件并获取URL
+        const imageURL = await saveBase64AsFile(
+            base64Content,
+            characterName,
+            uniqueFileName,
+            fileExtension
+        );
+
+        return { url: imageURL };
+    } catch (error) {
+        console.error("图片处理失败:", error);
+        throw error;
+    }
+}
+
+// 将功能暴露到全局
+window.__uploadImageByPlugin = processImageUpload;
+
+// 设置加载函数
+async function initializeSettings() {
+    // 合并默认设置
+    extension_settings[PLUGIN_CONFIG.id] = extension_settings[PLUGIN_CONFIG.id] || {};
+    if (Object.keys(extension_settings[PLUGIN_CONFIG.id]).length === 0) {
+        Object.assign(extension_settings[PLUGIN_CONFIG.id], PLUGIN_CONFIG.defaultSettings);
     }
 
-    function onImageHandlerToggle(event) {
-        extensionSettings.image_handler_enabled = Boolean($(event.target).prop("checked"));
+    // 更新UI状态
+    const enableSwitch = $("#plugin_enable_switch");
+    const testButton = $("#my_button");
+    const settingCheckbox = $("#example_setting");
+
+    if (enableSwitch.length) {
+        enableSwitch.prop("checked", extension_settings[PLUGIN_CONFIG.id].plugin_enabled);
+    }
+
+    if (testButton.length) {
+        testButton.prop("disabled", !extension_settings[PLUGIN_CONFIG.id].plugin_enabled);
+    }
+
+    if (settingCheckbox.length) {
+        settingCheckbox.prop("disabled", !extension_settings[PLUGIN_CONFIG.id].plugin_enabled);
+        settingCheckbox.prop("checked", extension_settings[PLUGIN_CONFIG.id].example_setting);
+    }
+}
+
+// 事件处理函数
+function handleSettingChange(event) {
+    const isChecked = Boolean($(event.target).prop("checked"));
+    extension_settings[PLUGIN_CONFIG.id].example_setting = isChecked;
+    saveSettingsDebounced();
+}
+
+function handleTestButtonClick() {
+    const isEnabled = extension_settings[PLUGIN_CONFIG.id].example_setting;
+    toastr.info(
+        `设置状态: ${isEnabled ? "已启用" : "已禁用"}`,
+        "测试按钮被点击了！"
+    );
+}
+
+let switchInitialized = false;
+
+function handlePluginToggle(event) {
+    const isEnabled = Boolean($(event.target).prop("checked"));
+    extension_settings[PLUGIN_CONFIG.id].plugin_enabled = isEnabled;
+
+    if (saveSettingsDebounced) {
         saveSettingsDebounced();
-        updateControlsState();
-        toastr.info(`Enhanced Image Handler has been ${extensionSettings.image_handler_enabled ? 'enabled' : 'disabled'}.`, "Settings Updated");
     }
 
-    function onAutoSaveToggle(event) {
-        extensionSettings.auto_save_images = Boolean($(event.target).prop("checked"));
-        saveSettingsDebounced();
-        toastr.info(`Auto-save is now ${extensionSettings.auto_save_images ? 'on' : 'off'}.`, "Settings Updated");
-    }
+    // 更新相关UI状态
+    $("#my_button").prop("disabled", !isEnabled);
+    $("#example_setting").prop("disabled", !isEnabled);
 
-    function onTimestampToggle(event) {
-        extensionSettings.use_timestamp_prefix = Boolean($(event.target).prop("checked"));
-        saveSettingsDebounced();
-        toastr.info(`Timestamp prefix is now ${extensionSettings.use_timestamp_prefix ? 'enabled' : 'disabled'}.`, "Settings Updated");
-    }
-
-    function onQualityChange(event) {
-        extensionSettings.image_quality = $(event.target).val();
-        saveSettingsDebounced();
-        toastr.info(`Image quality set to: ${extensionSettings.image_quality}`, "Settings Updated");
-    }
-
-    function onTestUpload() {
-        if (!extensionSettings.image_handler_enabled) {
-            toastr.error("Please enable the image handler first.", "Test Failed");
-            return;
+    // 显示状态提示
+    if (switchInitialized) {
+        if (isEnabled) {
+            toastr.success("图片工具已启用", "提示");
+        } else {
+            toastr.warning("图片工具已禁用", "提示");
         }
-
-        const fileInput = document.createElement('input');
-        fileInput.type = 'file';
-        fileInput.accept = 'image/*';
-        fileInput.onchange = async function(e) {
-            const file = e.target.files[0];
-            if (file) {
-                try {
-                    toastr.info("Processing image...", "Test Upload");
-                    const result = await window.__processImageUpload(file);
-                    toastr.success(
-                        `Image uploaded successfully!\nFile: ${result.filename}\nCharacter: ${result.character}`,
-                        "Test Succeeded"
-                    );
-                } catch (error) {
-                    toastr.error(`Test failed: ${error.message}`, "Upload Error");
-                }
-            }
-        };
-        fileInput.click();
     }
+    switchInitialized = true;
+}
 
-    // 初始化插件
-    jQuery(async () => {
-        // 等待SillyTavern的核心脚本加载完成
-        await initializeSettings();
+// jQuery初始化
+jQuery(async () => {
+    // 绑定事件监听器
+    $("#plugin_enable_switch").on("input", handlePluginToggle);
+    $("#my_button").on("click", handleTestButtonClick);
+    $("#example_setting").on("input", handleSettingChange);
 
-        // 动态绑定事件，以防UI元素延迟加载
-        $(document).on("input", "#image_handler_enable_toggle", onImageHandlerToggle);
-        $(document).on("input", "#auto_save_toggle", onAutoSaveToggle);
-        $(document).on("input", "#timestamp_prefix_toggle", onTimestampToggle);
-        $(document).on("change", "#image_quality_select", onQualityChange);
-        $(document).on("click", "#test_upload_btn", onTestUpload);
-
-        console.log(`${extensionName} v1.0.0 has been successfully loaded.`);
-    });
-
-})();
+    // 加载设置
+    await initializeSettings();
+});
