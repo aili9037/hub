@@ -1,0 +1,13 @@
+{
+    "id": "stable-image-uploader",
+    "display_name": "上传",
+    "description": "为SillyTavern提供稳定的图片上传功能，支持多种图床服务",
+    "version": "1.0.0",
+    "author": "海王的胜利",
+    "homepage": "",
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "",
+    "auto_update": false
+}
