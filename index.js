@@ -1,388 +1,264 @@
-(() => {
-    'use strict';
+// Enhanced Image Handler Plugin for SillyTavern
+// Prevents direct base64 conversion in beautified UI
 
-    const MODULE_NAME = 'stable-image-uploader';
-    const DEBUG = true;
-
-    // 配置选项
-    let config = {
-        apiUrl: 'https://api.imgbb.com/1/upload',
-        apiKey: '',
-        maxFileSize: 32 * 1024 * 1024, // 32MB
-        allowedTypes: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
-        timeout: 30000,
-        retryCount: 3,
-        retryDelay: 1000
-    };
-
-    // 日志函数
-    function log(message, level = 'info') {
-        if (DEBUG) {
-            console.log(`[${MODULE_NAME}] ${level.toUpperCase()}: ${message}`);
-        }
+class EnhancedImageHandler {
+    constructor() {
+        this.pluginName = 'Enhanced Image Handler';
+        this.version = '1.0.0';
+        this.imageCache = new Map();
+        this.observers = [];
+        this.init();
     }
 
-    // 错误处理函数
-    function handleError(error, context = '') {
-        log(`错误 ${context}: ${error.message}`, 'error');
-        toastr.error(`图片上传失败: ${error.message}`, '上传错误');
-        return null;
+    init() {
+        console.log(`${this.pluginName} v${this.version} initializing...`);
+        this.setupImageInterception();
+        this.setupMutationObserver();
+        this.setupEventListeners();
+        console.log(`${this.pluginName} initialized successfully`);
     }
 
-    // 文件验证函数
-    function validateFile(file) {
-        if (!file) {
-            throw new Error('未选择文件');
-        }
+    // 核心功能：拦截图片处理
+    setupImageInterception() {
+        // 拦截原生的图片处理函数
+        const originalCreateElement = document.createElement;
+        document.createElement = (tagName) => {
+            const element = originalCreateElement.call(document, tagName);
 
-        if (file.size > config.maxFileSize) {
-            throw new Error(`文件大小超过限制 (${(config.maxFileSize / 1024 / 1024).toFixed(1)}MB)`);
-        }
+            if (tagName.toLowerCase() === 'img') {
+                this.enhanceImageElement(element);
+            }
 
-        if (!config.allowedTypes.includes(file.type)) {
-            throw new Error('不支持的文件类型');
-        }
+            return element;
+        };
 
-        return true;
+        // 拦截FileReader的base64转换
+        const originalFileReader = window.FileReader;
+        window.FileReader = function() {
+            const reader = new originalFileReader();
+            const originalReadAsDataURL = reader.readAsDataURL;
+
+            reader.readAsDataURL = function(file) {
+                // 检查是否在美化界面中
+                if (this.isInBeautifiedUI()) {
+                    // 使用URL.createObjectURL代替base64
+                    const objectURL = URL.createObjectURL(file);
+                    this.handleImageWithObjectURL(objectURL, file);
+                    return;
+                }
+
+                return originalReadAsDataURL.call(this, file);
+            }.bind(this);
+
+            return reader;
+        };
     }
 
-    // 延迟函数
-    function delay(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
+    // 增强图片元素
+    enhanceImageElement(imgElement) {
+        const originalSetSrc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src').set;
 
-    // 图片压缩函数
-    function compressImage(file, maxWidth = 1920, quality = 0.8) {
-        return new Promise((resolve) => {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            const img = new Image();
-
-            img.onload = function() {
-                const ratio = Math.min(maxWidth / img.width, maxWidth / img.height);
-                canvas.width = img.width * ratio;
-                canvas.height = img.height * ratio;
-
-                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-                canvas.toBlob(resolve, file.type, quality);
-            };
-
-            img.src = URL.createObjectURL(file);
-        });
-    }
-
-    // 主要上传函数
-    async function uploadImage(file, retryCount = 0) {
-        try {
-            validateFile(file);
-
-            // 如果文件过大，尝试压缩
-            if (file.size > 5 * 1024 * 1024) {
-                log('文件较大，正在压缩...');
-                file = await compressImage(file);
-            }
-
-            const formData = new FormData();
-            formData.append('image', file);
-
-            if (config.apiKey) {
-                formData.append('key', config.apiKey);
-            }
-
-            log(`开始上传图片，尝试次数: ${retryCount + 1}`);
-
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), config.timeout);
-
-            const response = await fetch(config.apiUrl, {
-                method: 'POST',
-                body: formData,
-                signal: controller.signal,
-                headers: {
-                    'Accept': 'application/json'
-                }
-            });
-
-            clearTimeout(timeoutId);
-
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-
-            const result = await response.json();
-
-            if (result.success && result.data && result.data.url) {
-                log('图片上传成功');
-                toastr.success('图片上传成功！', '上传完成');
-                return result.data.url;
-            } else {
-                throw new Error(result.error?.message || '上传服务返回错误');
-            }
-
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                error.message = '上传超时';
-            }
-
-            if (retryCount < config.retryCount) {
-                log(`上传失败，${config.retryDelay}ms后重试...`);
-                await delay(config.retryDelay);
-                return uploadImage(file, retryCount + 1);
-            }
-
-            return handleError(error, '上传过程中');
-        }
-    }
-
-    // 创建UI界面
-    function createUI() {
-        const html = `
-            <div id="image-uploader-container" class="flex-container flexFlowColumn">
-                <div class="justifyCenter">
-                    <h3>稳定图片上传器</h3>
-                </div>
-
-                <div class="flex-container">
-                    <label for="image-upload-input" class="menu_button" style="cursor: pointer;">
-                        <i class="fa fa-upload"></i> 选择图片
-                    </label>
-                    <input type="file" id="image-upload-input" accept="image/*" style="display: none;">
-                </div>
-
-                <div class="flex-container" style="margin-top: 10px;">
-                    <label for="api-key-input">API密钥:</label>
-                    <input type="password" id="api-key-input" placeholder="输入图床API密钥" style="flex: 1; margin-left: 10px;">
-                </div>
-
-                <div class="flex-container" style="margin-top: 10px;">
-                    <select id="service-select" style="flex: 1;">
-                        <option value="https://api.imgbb.com/1/upload">ImgBB</option>
-                        <option value="https://sm.ms/api/v2/upload">SM.MS</option>
-                        <option value="custom">自定义服务</option>
-                    </select>
-                </div>
-
-                <div id="upload-progress" style="display: none; margin-top: 10px;">
-                    <div class="progress-bar">
-                        <div class="progress-fill"></div>
-                    </div>
-                    <span class="progress-text">上传中...</span>
-                </div>
-
-                <div id="upload-result" style="margin-top: 10px; display: none;">
-                    <textarea id="result-url" readonly style="width: 100%; height: 60px;"></textarea>
-                    <button id="copy-url-btn" class="menu_button" style="margin-top: 5px;">
-                        <i class="fa fa-copy"></i> 复制链接
-                    </button>
-                </div>
-            </div>
-
-            <style>
-                #image-uploader-container {
-                    padding: 15px;
-                    border: 1px solid var(--SmartThemeBorderColor);
-                    border-radius: 10px;
-                    background: var(--SmartThemeBodyColor);
-                    margin: 10px 0;
-                }
-
-                .progress-bar {
-                    width: 100%;
-                    height: 20px;
-                    background-color: var(--SmartThemeQuoteColor);
-                    border-radius: 10px;
-                    overflow: hidden;
-                }
-
-                .progress-fill {
-                    height: 100%;
-                    background: linear-gradient(90deg, #4CAF50, #45a049);
-                    width: 0%;
-                    transition: width 0.3s ease;
-                    animation: pulse 1.5s infinite;
-                }
-
-                @keyframes pulse {
-                    0% { opacity: 1; }
-                    50% { opacity: 0.7; }
-                    100% { opacity: 1; }
-                }
-
-                .progress-text {
-                    display: block;
-                    text-align: center;
-                    margin-top: 5px;
-                    font-size: 12px;
-                    color: var(--SmartThemeBodyColor);
-                }
-            </style>
-        `;
-
-        return html;
-    }
-
-    // 绑定事件
-    function bindEvents() {
-        const fileInput = document.getElementById('image-upload-input');
-        const apiKeyInput = document.getElementById('api-key-input');
-        const serviceSelect = document.getElementById('service-select');
-        const copyBtn = document.getElementById('copy-url-btn');
-        const progressDiv = document.getElementById('upload-progress');
-        const resultDiv = document.getElementById('upload-result');
-        const resultTextarea = document.getElementById('result-url');
-
-        // 文件选择事件
-        fileInput?.addEventListener('change', async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-
-            try {
-                // 显示进度条
-                progressDiv.style.display = 'block';
-                resultDiv.style.display = 'none';
-
-                const url = await uploadImage(file);
-
-                if (url) {
-                    resultTextarea.value = url;
-                    resultDiv.style.display = 'block';
-
-                    // 自动插入到聊天输入框
-                    const chatInput = document.getElementById('send_textarea');
-                    if (chatInput) {
-                        const currentValue = chatInput.value;
-                        chatInput.value = currentValue + (currentValue ? '\n' : '') + url;
-                        chatInput.focus();
-                    }
-                }
-            } catch (error) {
-                handleError(error, '文件处理');
-            } finally {
-                progressDiv.style.display = 'none';
-                fileInput.value = '';
-            }
-        });
-
-        // API密钥输入事件
-        apiKeyInput?.addEventListener('input', (e) => {
-            config.apiKey = e.target.value.trim();
-            localStorage.setItem(`${MODULE_NAME}_apiKey`, config.apiKey);
-        });
-
-        // 服务选择事件
-        serviceSelect?.addEventListener('change', (e) => {
-            const value = e.target.value;
-            if (value !== 'custom') {
-                config.apiUrl = value;
-            } else {
-                const customUrl = prompt('请输入自定义API地址:');
-                if (customUrl) {
-                    config.apiUrl = customUrl;
-                }
-            }
-            localStorage.setItem(`${MODULE_NAME}_apiUrl`, config.apiUrl);
-        });
-
-        // 复制按钮事件
-        copyBtn?.addEventListener('click', () => {
-            resultTextarea.select();
-            document.execCommand('copy');
-            toastr.success('链接已复制到剪贴板', '复制成功');
-        });
-
-        // 拖拽上传支持
-        document.addEventListener('dragover', (e) => {
-            e.preventDefault();
-        });
-
-        document.addEventListener('drop', async (e) => {
-            e.preventDefault();
-            const files = Array.from(e.dataTransfer.files);
-            const imageFile = files.find(file => file.type.startsWith('image/'));
-
-            if (imageFile) {
-                try {
-                    progressDiv.style.display = 'block';
-                    resultDiv.style.display = 'none';
-
-                    const url = await uploadImage(imageFile);
-
-                    if (url) {
-                        resultTextarea.value = url;
-                        resultDiv.style.display = 'block';
-
-                        const chatInput = document.getElementById('send_textarea');
-                        if (chatInput) {
-                            const currentValue = chatInput.value;
-                            chatInput.value = currentValue + (currentValue ? '\n' : '') + url;
-                            chatInput.focus();
+        Object.defineProperty(imgElement, 'src', {
+            set: function(value) {
+                if (this.shouldPreventBase64Conversion(value)) {
+                    // 如果是base64，尝试转换为blob URL
+                    if (value.startsWith('data:image/')) {
+                        const blobUrl = this.convertBase64ToBlob(value);
+                        if (blobUrl) {
+                            originalSetSrc.call(this, blobUrl);
+                            return;
                         }
                     }
-                } catch (error) {
-                    handleError(error, '拖拽上传');
-                } finally {
-                    progressDiv.style.display = 'none';
                 }
+                originalSetSrc.call(this, value);
+            }.bind(this),
+            get: function() {
+                return this.getAttribute('src');
             }
         });
     }
 
-    // 加载保存的配置
-    function loadConfig() {
-        const savedApiKey = localStorage.getItem(`${MODULE_NAME}_apiKey`);
-        const savedApiUrl = localStorage.getItem(`${MODULE_NAME}_apiUrl`);
+    // 检查是否在美化界面中
+    isInBeautifiedUI() {
+        // 检查当前上下文是否在美化界面中
+        const beautifiedContainers = document.querySelectorAll('[class*="beautified"], [class*="enhanced"], .message-body');
+        return beautifiedContainers.length > 0;
+    }
 
-        if (savedApiKey) {
-            config.apiKey = savedApiKey;
-        }
-        if (savedApiUrl) {
-            config.apiUrl = savedApiUrl;
+    // 判断是否应该阻止base64转换
+    shouldPreventBase64Conversion(src) {
+        if (!src || typeof src !== 'string') return false;
+
+        // 检查是否是base64图片且在美化界面中
+        return src.startsWith('data:image/') && this.isInBeautifiedUI();
+    }
+
+    // 将base64转换为Blob URL
+    convertBase64ToBlob(base64) {
+        try {
+            const [header, data] = base64.split(',');
+            const mimeMatch = header.match(/data:([^;]+)/);
+            const mime = mimeMatch ? mimeMatch[1] : 'image/png';
+
+            const byteCharacters = atob(data);
+            const byteNumbers = new Array(byteCharacters.length);
+
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], { type: mime });
+
+            const blobUrl = URL.createObjectURL(blob);
+
+            // 缓存blob URL以便后续清理
+            this.imageCache.set(blobUrl, blob);
+
+            return blobUrl;
+        } catch (error) {
+            console.warn(`${this.pluginName}: Failed to convert base64 to blob:`, error);
+            return null;
         }
     }
 
-    // 插件初始化
-    function init() {
-        log('插件初始化开始');
+    // 使用Object URL处理图片
+    handleImageWithObjectURL(objectURL, file) {
+        // 创建自定义事件来通知图片已准备就绪
+        const event = new CustomEvent('imageReady', {
+            detail: {
+                url: objectURL,
+                file: file,
+                type: 'objectURL'
+            }
+        });
 
-        loadConfig();
+        document.dispatchEvent(event);
+    }
 
-        // 添加到扩展面板
-        const extensionsContainer = document.getElementById('extensions_settings');
-        if (extensionsContainer) {
-            const pluginDiv = document.createElement('div');
-            pluginDiv.innerHTML = createUI();
-            extensionsContainer.appendChild(pluginDiv);
-
-            // 延迟绑定事件，确保DOM完全加载
-            setTimeout(() => {
-                bindEvents();
-
-                // 恢复保存的配置到UI
-                const apiKeyInput = document.getElementById('api-key-input');
-                const serviceSelect = document.getElementById('service-select');
-
-                if (apiKeyInput && config.apiKey) {
-                    apiKeyInput.value = config.apiKey;
+    // 设置变化监听器
+    setupMutationObserver() {
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                if (mutation.type === 'childList') {
+                    mutation.addedNodes.forEach((node) => {
+                        if (node.nodeType === Node.ELEMENT_NODE) {
+                            this.processNewElement(node);
+                        }
+                    });
                 }
+            });
+        });
 
-                if (serviceSelect) {
-                    serviceSelect.value = config.apiUrl;
-                }
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
 
-                log('插件初始化完成');
-            }, 100);
-        } else {
-            log('未找到扩展设置容器，延迟初始化', 'warn');
-            setTimeout(init, 1000);
+        this.observers.push(observer);
+    }
+
+    // 处理新添加的元素
+    processNewElement(element) {
+        // 处理新添加的图片元素
+        const images = element.querySelectorAll ? element.querySelectorAll('img') : [];
+        images.forEach(img => this.enhanceImageElement(img));
+
+        // 如果元素本身是图片
+        if (element.tagName === 'IMG') {
+            this.enhanceImageElement(element);
         }
     }
 
-    // 等待SillyTavern完全加载
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
+    // 设置事件监听器
+    setupEventListeners() {
+        // 监听图片加载事件
+        document.addEventListener('imageReady', (event) => {
+            console.log(`${this.pluginName}: Image ready with Object URL`, event.detail);
+        });
+
+        // 监听页面卸载，清理blob URLs
+        window.addEventListener('beforeunload', () => {
+            this.cleanup();
+        });
+
+        // 定期清理未使用的blob URLs
+        setInterval(() => {
+            this.cleanupUnusedBlobs();
+        }, 300000); // 每5分钟清理一次
     }
 
-})();
+    // 清理未使用的blob URLs
+    cleanupUnusedBlobs() {
+        const currentImages = document.querySelectorAll('img');
+        const usedUrls = new Set();
+
+        currentImages.forEach(img => {
+            if (img.src && img.src.startsWith('blob:')) {
+                usedUrls.add(img.src);
+            }
+        });
+
+        this.imageCache.forEach((blob, url) => {
+            if (!usedUrls.has(url)) {
+                URL.revokeObjectURL(url);
+                this.imageCache.delete(url);
+            }
+        });
+    }
+
+    // 清理资源
+    cleanup() {
+        // 清理所有blob URLs
+        this.imageCache.forEach((blob, url) => {
+            URL.revokeObjectURL(url);
+        });
+        this.imageCache.clear();
+
+        // 清理观察器
+        this.observers.forEach(observer => observer.disconnect());
+        this.observers = [];
+    }
+
+    // 获取插件状态
+    getStatus() {
+        return {
+            name: this.pluginName,
+            version: this.version,
+            cachedImages: this.imageCache.size,
+            isActive: true
+        };
+    }
+}
+
+// SillyTavern插件接口
+const plugin = {
+    name: 'Enhanced Image Handler',
+    version: '1.0.0',
+
+    init: function() {
+        window.enhancedImageHandler = new EnhancedImageHandler();
+        return true;
+    },
+
+    cleanup: function() {
+        if (window.enhancedImageHandler) {
+            window.enhancedImageHandler.cleanup();
+            delete window.enhancedImageHandler;
+        }
+    },
+
+    getStatus: function() {
+        return window.enhancedImageHandler ? window.enhancedImageHandler.getStatus() : null;
+    }
+};
+
+// 导出插件
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = plugin;
+} else {
+    // 在SillyTavern环境中自动初始化
+    if (typeof window !== 'undefined') {
+        plugin.init();
+    }
+}
