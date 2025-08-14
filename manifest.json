@@ -1,12 +1,12 @@
 {
-    "name": "Enhanced-Image-Handler",
-    "display_name": "增强图片处理器 (Nova's Edition)",
-    "author": "海王的胜利",
-    "description": "一个功能更强大的图片处理插件，支持批量上传、图片预处理和更多自定义选项。它为其他界面提供核心图片保存能力。",
-    "version": "1.0.0",
-    "tags": ["images", "files"],
-    "publish_date": "2024-05-21",
-    "requirements": [],
-    "has_options": true,
-    "entry": "index.js"
+  "display_name": "Enhanced Image Handler",
+  "loading_order": 10,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "",
+  "author": "海王的胜利",
+  "version": "1.0.0",
+  "homePage": "https://github.com/your-repo/your-project",
+  "auto_update": true
 }
