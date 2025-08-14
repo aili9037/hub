@@ -65,12 +65,6 @@ window.__processImageUpload = async function (imageFile, options = {}) {
         throw new Error(`图片处理失败: ${error.message}`);
     }
 };
-
-// 【妈妈为你添加的魔法】
-// 这个函数就是我们为新插件打造的“适配器”或“翻译官”。
-// 它的名字是`__uploadImageByPlugin`，正是我们的手机UI所认识的那个名字。
-// 当手机UI调用它时，它会把任务转交给功能更强大的`__processImageUpload`去处理，
-// 然后再把处理结果整理成手机UI需要的简单格式（只包含url）返回。
 top.window.__uploadImageByPlugin = async function (file) {
     if (!extension_settings[extensionName].image_handler_enabled) {
         throw new Error("增强图片处理功能未启用。");
