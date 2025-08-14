@@ -1,13 +1,15 @@
 {
-    "id": "stable-image-uploader",
-    "display_name": "上传",
-    "description": "为SillyTavern提供稳定的图片上传功能，支持多种图床服务",
-    "version": "1.0.0",
-    "author": "海王的胜利",
-    "homepage": "",
-    "requires": [],
-    "optional": [],
-    "js": "index.js",
-    "css": "",
-    "auto_update": false
+  "name": "Enhanced Image Handler",
+  "version": "1.0.0",
+  "description": "Enhanced image handling plugin that prevents base64 conversion in beautified UI",
+  "author": "Enhanced Version",
+  "main": "index.js",
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+  "sillytavern": {
+    "minVersion": "1.10.0",
+    "maxVersion": "*"
+  }
 }
