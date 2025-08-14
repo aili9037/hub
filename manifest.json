@@ -1,5 +1,5 @@
 {
-  "display_name": "Enhanced Image Handler",
+  "display_name": "图片工具",
   "loading_order": 10,
   "requires": [],
   "optional": [],
@@ -7,6 +7,6 @@
   "css": "",
   "author": "海王的胜利",
   "version": "1.0.0",
-  "homePage": "https://github.com/your-repo/your-project",
+  "homePage": "https://github.com/aili9037/hub.git",
   "auto_update": true
 }
